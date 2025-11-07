@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>AR marker + GLTF (Three.js + AR.js)</title>
+  <style>html,body{height:100%;margin:0}#info{position:fixed;left:10px;top:10px;z-index:2;background:rgba(255,255,255,0.9);padding:8px;border-radius:6px;font-family:Arial,Helvetica,sans-serif}canvas{display:block}</style>
+</head>
+<body>
+  <div id="info">Autorisez la caméra. Imprimez la page A4 contenant le marqueur (Hiro) + QR. Rechargez la page ou scannez le QR pour y retourner.</div>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+  <!-- AR.js (three.js integration) -->
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js/three.js/build/ar-threex.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/loaders/GLTFLoader.js"></script>
+
+  <script>
+  // Basé sur l'exemple AR.js + three.js : création d'une scène three.js attachée à un marker.
+  let scene, camera, renderer;
+  let arToolkitSource, arToolkitContext;
+  let markerRoot;
+
+  init();
+  animate();
+
+  function init(){
+    scene = new THREE.Scene();
+
+    // Lumières
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambient);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    dir.position.set(0,1,0);
+    scene.add(dir);
+
+    // Renderer
+    renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.domElement.style.position = 'absolute';
+    renderer.domElement.style.top = '0px';
+    document.body.appendChild(renderer.domElement);
+
+    // Camera (placeholder, AR.js va le remplacer)
+    camera = new THREE.Camera();
+    scene.add(camera);
+
+    // AR Toolkit Source: récupère le flux vidéo de la caméra
+    arToolkitSource = new THREEx.ArToolkitSource({
+      sourceType : 'webcam',
+      // resolution pour la caméra (utile si la caméra est lente)
+      sourceWidth: window.innerWidth,
+      sourceHeight: window.innerHeight,
+    });
+
+    arToolkitSource.init(function onReady(){
+      onResize();
+    });
+
+    // Contexte AR (calibration)
+    arToolkitContext = new THREEx.ArToolkitContext({
+      cameraParametersUrl: 'https://cdn.jsdelivr.net/gh/AR-js-org/AR.js/data/data/camera_para.dat',
+      detectionMode: 'mono'
+    });
+
+    // Initialisation du contexte
+    arToolkitContext.init(function onCompleted(){
+      // copier la matrice de projection dans la caméra three.js
+      camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+    });
+
+    // Root pour le marker
+    markerRoot = new THREE.Group();
+    scene.add(markerRoot);
+
+    // MarkerControls: utilise le marqueur "hiro" fourni par AR.js
+    const markerControls = new THREEx.ArMarkerControls(arToolkitContext, markerRoot, {
+      type : 'pattern',
+      // patternUrl peut pointer vers un pattern personnalisé; 'hiro' est fourni par AR.js
+      patternUrl : 'https://cdn.jsdelivr.net/gh/AR-js-org/AR.js/three.js/data/patt.hiro'
+    });
+
+    // Chargez votre modèle GLTF et attachez-le à markerRoot
+    const loader = new THREE.GLTFLoader();
+    // REMPLACEZ cette URL par le chemin vers votre .gltf/.glb hébergé
+    const gltfUrl = 'modeles/mon-modele.gltf';
+
+    loader.load(gltfUrl, function(gltf){
+      const model = gltf.scene || gltf.scenes[0];
+      // ajustements courants: orientation et taille
+      model.rotation.x = -Math.PI/2; // dépend du modèle
+      model.scale.set(0.5,0.5,0.5);
+      model.position.set(0,0,0);
+
+      markerRoot.add(model);
+    }, undefined, function(err){
+      console.error('Erreur chargement GLTF', err);
+      const msg = document.getElementById('info');
+      msg.innerText = 'Erreur chargement modèle. Vérifiez le chemin vers le GLTF.';
+    });
+
+    window.addEventListener('resize', function(){ onResize(); });
+  }
+
+  function onResize(){
+    arToolkitSource.onResizeElement();
+    arToolkitSource.copyElementSizeTo(renderer.domElement);
+    if(arToolkitContext.arController !== null){
+      arToolkitSource.copyElementSizeTo(arToolkitContext.arController.canvas);
+    }
+  }
+
+  function update(){
+    if(arToolkitSource.ready === false) return;
+    arToolkitContext.update(arToolkitSource.domElement);
+    // markerRoot.visible indiquera si le marker est détecté
+  }
+
+  function animate(){
+    requestAnimationFrame(animate);
+    update();
+    renderer.render(scene, camera);
+  }
+  </script>
+
+</body>
+</html>
