@@ -82,7 +82,7 @@
     // Chargez votre modèle GLTF et attachez-le à markerRoot
     const loader = new THREE.GLTFLoader();
     // REMPLACEZ cette URL par le chemin vers votre .gltf/.glb hébergé
-    const gltfUrl = 'modeles/mon-modele.gltf';
+    const gltfUrl = '/camel-2.glb';
 
     loader.load(gltfUrl, function(gltf){
       const model = gltf.scene || gltf.scenes[0];
