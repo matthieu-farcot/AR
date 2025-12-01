@@ -55,9 +55,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     {id:'bas',offset:{x:0,y:-130,z:0}}
   ];
 
-  const originalData={};
-  const particles=[];
-  let explosionSphere=null;
+  const originalData={}; // gardera les positions/rotations *initiales* (capturées une seule fois)
   let looping = false;
   let explodeTimeout = null;
 
@@ -65,32 +63,80 @@ document.addEventListener('DOMContentLoaded',()=>{
   particlesContainer.setAttribute('id','particles-container');
   enceinte.appendChild(particlesContainer);
 
-  function initComponents(){
+  // Capture initiale une seule fois : lit object3D (position finale réelle si le model est chargé).
+  function captureOriginalDataOnce(){
     components.forEach(comp=>{
+      if(originalData[comp.id]) return; // déjà capturé
       const el=document.getElementById(comp.id);
-      if(el){
-        const pos=el.getAttribute('position');
-        const rot=el.getAttribute('rotation');
-        originalData[comp.id]={position:{x:pos.x,y:pos.y,z:pos.z},rotation:{x:rot.x,y:rot.y,z:rot.z}};
+      if(!el) return;
+      // Si object3D disponible (modèle chargé), prend les valeurs réelles ; sinon fallback sur getAttribute
+      if(el.object3D && el.object3D.position){
+        const p = el.object3D.position;
+        const r = el.object3D.rotation;
+        // stocke en degrés pour cohérence avec les rotations dans ton script
+        originalData[comp.id] = {
+          position: { x: p.x, y: p.y, z: p.z },
+          rotation: { x: THREE.MathUtils.radToDeg(r.x), y: THREE.MathUtils.radToDeg(r.y), z: THREE.MathUtils.radToDeg(r.z) }
+        };
+      } else {
+        // fallback à l'attribut HTML (valeur par défaut dans le markup)
+        const pos = el.getAttribute('position') || {x:0,y:0,z:0};
+        const rot = el.getAttribute('rotation') || {x:0,y:0,z:0};
+        originalData[comp.id] = {
+          position: { x: pos.x, y: pos.y, z: pos.z },
+          rotation: { x: rot.x, y: rot.y, z: rot.z }
+        };
       }
     });
   }
 
+  // essaye de capturer après quelques frames pour laisser le temps au chargement des modèles
+  function tryCaptureOriginalDataWithDelay(){
+    // 3 tentatives espacées si object3D non prêt tout de suite
+    let attempts = 0;
+    function attempt(){
+      captureOriginalDataOnce();
+      attempts++;
+      // si pas tout capturé et attempts < 3, réessaye au prochain frame
+      const missing = components.some(c => !originalData[c.id]);
+      if(missing && attempts < 3){
+        requestAnimationFrame(attempt);
+      } else {
+        // si encore manquant, on laisse le fallback getAttribute déjà rempli ci-dessus
+        // console.log('originalData ready', originalData);
+      }
+    }
+    attempt();
+  }
+  tryCaptureOriginalDataWithDelay();
+
   function resetToOriginal(){
     // Stoppe toute boucle d'explosion
     looping = false;
-    if(explodeTimeout) clearTimeout(explodeTimeout);
+    if(explodeTimeout) {
+      clearTimeout(explodeTimeout);
+      explodeTimeout = null;
+    }
 
     components.forEach(comp=>{
       const el = document.getElementById(comp.id);
-      const orig = originalData[comp.id].position;
-      const origRot = originalData[comp.id].rotation;
-      el.object3D.position.set(orig.x, orig.y, orig.z);
-      el.object3D.rotation.set(
-        THREE.MathUtils.degToRad(origRot.x),
-        THREE.MathUtils.degToRad(origRot.y),
-        THREE.MathUtils.degToRad(origRot.z)
-      );
+      if(!el) return;
+      const orig = originalData[comp.id] ? originalData[comp.id].position : {x:0,y:0,z:0};
+      const origRot = originalData[comp.id] ? originalData[comp.id].rotation : {x:0,y:0,z:0};
+      // remettre la position / rotation directement sur object3D (ne dépend pas des animations)
+      if(el.object3D){
+        el.object3D.position.set(orig.x, orig.y, orig.z);
+        el.object3D.rotation.set(
+          THREE.MathUtils.degToRad(origRot.x),
+          THREE.MathUtils.degToRad(origRot.y),
+          THREE.MathUtils.degToRad(origRot.z)
+        );
+      } else {
+        // fallback pour s'assurer que l'attribut A-Frame est aussi mis à jour
+        el.setAttribute('position', `${orig.x} ${orig.y} ${orig.z}`);
+        el.setAttribute('rotation', `${origRot.x} ${origRot.y} ${origRot.z}`);
+      }
+      // supprime toutes les animations A-Frame pour éviter état persistant
       el.removeAttribute('animation__pos');
       el.removeAttribute('animation__rot');
       el.removeAttribute('animation__return');
@@ -103,8 +149,9 @@ document.addEventListener('DOMContentLoaded',()=>{
 
     components.forEach(comp=>{
       const el=document.getElementById(comp.id);
-      const orig = originalData[comp.id].position;
-      const origRot = originalData[comp.id].rotation;
+      if(!el) return;
+      const orig = originalData[comp.id] ? originalData[comp.id].position : {x:0,y:0,z:0};
+      const origRot = originalData[comp.id] ? originalData[comp.id].rotation : {x:0,y:0,z:0};
       const targetPos = {x:orig.x+comp.offset.x, y:orig.y+comp.offset.y, z:orig.z+comp.offset.z};
       const targetRot = {x:origRot.x+(Math.random()-0.5)*60,
                          y:origRot.y+(Math.random()-0.5)*60,
@@ -121,8 +168,9 @@ document.addEventListener('DOMContentLoaded',()=>{
 
     components.forEach(comp=>{
       const el=document.getElementById(comp.id);
-      const orig = originalData[comp.id].position;
-      const origRot = originalData[comp.id].rotation;
+      if(!el) return;
+      const orig = originalData[comp.id] ? originalData[comp.id].position : {x:0,y:0,z:0};
+      const origRot = originalData[comp.id] ? originalData[comp.id].rotation : {x:0,y:0,z:0};
       el.setAttribute('animation__return',{property:'position',to:`${orig.x} ${orig.y} ${orig.z}`,dur:1800,easing:'easeInOutCubic'});
       el.setAttribute('animation__rot_return',{property:'rotation',to:`${origRot.x} ${origRot.y} ${origRot.z}`,dur:1800,easing:'easeInOutCubic'});
     });
@@ -130,11 +178,22 @@ document.addEventListener('DOMContentLoaded',()=>{
     explodeTimeout = setTimeout(explode, 1900);
   }
 
+  // écouteur MindAR
   const targetEntity=document.querySelector('[mindar-image-target]');
   targetEntity.addEventListener('targetFound',()=>{
+    // IMPORTANT : on remet tout d'abord les composants à leurs valeurs initiales
+    // afin d'éviter de repartir d'un état intermédiaire.
     parent.setAttribute('visible',true);
-    initComponents();
+
+    // si originalData n'est pas complètement capturé, essaie de capturer maintenant
+    captureOriginalDataOnce();
+
+    // garantir position de départ propre
+    resetToOriginal();
+
+    // démarrer la boucle
     looping = true;
+    // lance l'explosion (qui appellera reassemble -> explode en boucle)
     explode();
   });
 
