@@ -1,17 +1,21 @@
 <script>
 AFRAME.registerComponent('look-at-camera',{
   tick: function(){
-    const camera=document.querySelector('a-camera');
-    if(camera) this.el.object3D.lookAt(camera.object3D.position);
+    const camera = document.querySelector('a-camera');
+    if (camera) this.el.object3D.lookAt(camera.object3D.position);
   }
 });
 
-document.addEventListener('DOMContentLoaded',()=>{
-  const parent=document.querySelector('#enceinte-parent');
-  const enceinte=document.getElementById('enceinte');
+(function(){
+  // Constantes / configuration
+  const WAIT_BEFORE_EXPLODE = 5000;  // ms
+  const EXPLODE_ANIM_DUR = 1000;
+  const FLOAT_DURATION = 5000;
+  const REASSEMBLE_ANIM_DUR = 1000;
+  const MAX_TARGET_WAIT_ATTEMPTS = 30; // sécurité pour ne pas boucler indéfiniment
 
-  // LISTE DES PIÈCES + POSITIONS INDISPENSABLES (positions de DÉPART absolues en local space)
-  const components=[
+  // DEFINIT LES POSITIONS DE DÉPART OBLIGATOIRES (la "vérité")
+  const components = [
     {id:'back', startPos:{x:0,y:0,z:-200}, offset:{x:0,y:0,z:-200}},
     {id:'Left', startPos:{x:-180,y:60,z:0}, offset:{x:-180,y:60,z:0}},
     {id:'Right', startPos:{x:180,y:60,z:0}, offset:{x:180,y:60,z:0}},
@@ -23,45 +27,30 @@ document.addEventListener('DOMContentLoaded',()=>{
     {id:'bas', startPos:{x:0,y:-130,z:0}, offset:{x:0,y:-130,z:0}}
   ];
 
-  // stocke la "vérité" des positions & rotations (nous forçons les positions fournies ci-dessus)
+  // état
   const originalData = {};
   let isActive = false;
   const timeouts = [];
 
-  // Durées (modifiable)
-  const WAIT_BEFORE_EXPLODE = 5000;  // attendre 5s avant explosion
-  const EXPLODE_ANIM_DUR = 1000;
-  const FLOAT_DURATION = 5000;      // 5s de flottement
-  const REASSEMBLE_ANIM_DUR = 1000;
-
   function pushTimeout(id){ timeouts.push(id); }
-  function clearAllTimeouts(){
-    while(timeouts.length) clearTimeout(timeouts.pop());
-  }
+  function clearAllTimeouts(){ while(timeouts.length) clearTimeout(timeouts.pop()); }
 
-  // Initialise les positions dans le DOM avec les valeurs "startPos" fournies,
-  // et remplit originalData avec ces mêmes positions (et rotations à 0 par défaut).
+  // Force startPos dans le DOM (setAttribute local space) et stocke originalData
   function enforceStartPositions(){
     components.forEach(comp=>{
       const el = document.getElementById(comp.id);
       if(!el) return;
       const p = comp.startPos;
-      // on force la position déclarée (setAttribute -> mode local, respecte scale parent)
       el.setAttribute('position', `${p.x} ${p.y} ${p.z}`);
-      // on met rotation à 0 par défaut (tu peux personnaliser si besoin)
+      // garder rotation existante si présente, sinon 0 0 0
       const rot = el.getAttribute('rotation') || {x:0,y:0,z:0};
-      // si tu veux forcer rotation précise, change ci-dessous :
       el.setAttribute('rotation', `${rot.x} ${rot.y} ${rot.z}`);
-
-      // stocker la vérité
       originalData[comp.id] = {
         position: { x: Number(p.x), y: Number(p.y), z: Number(p.z) },
         rotation: { x: Number(rot.x), y: Number(rot.y), z: Number(rot.z) }
       };
-
-      // s'assurer visibles au départ
       el.setAttribute('visible', true);
-      // nettoyage éventuel d'anciennes animations
+      // nettoyage animations résiduelles
       el.removeAttribute('animation__pos');
       el.removeAttribute('animation__rot');
       el.removeAttribute('animation__float');
@@ -71,42 +60,43 @@ document.addEventListener('DOMContentLoaded',()=>{
     });
   }
 
-  // Remet instantanément chaque entité EXACTEMENT à originalData (en utilisant setAttribute)
   function resetToOriginalInstant(){
     components.forEach(comp=>{
       const el = document.getElementById(comp.id);
       if(!el) return;
       const orig = originalData[comp.id] ? originalData[comp.id].position : comp.startPos;
       const origRot = originalData[comp.id] ? originalData[comp.id].rotation : {x:0,y:0,z:0};
-      // supprimer toutes animations pour éviter états persistants
       el.removeAttribute('animation__pos');
       el.removeAttribute('animation__rot');
       el.removeAttribute('animation__float');
       el.removeAttribute('animation__rot_float');
       el.removeAttribute('animation__return');
       el.removeAttribute('animation__rot_return');
-
-      // setter via setAttribute pour respecter l'espace local (scale du parent conservé)
       el.setAttribute('position', `${orig.x} ${orig.y} ${orig.z}`);
       el.setAttribute('rotation', `${origRot.x} ${origRot.y} ${origRot.z}`);
       el.setAttribute('visible', true);
     });
   }
 
-  // Fonction principale : explosion -> float -> reassemble -> relance
+  // Récupère la position locale courante via getAttribute (fallback original)
+  function getCurrentLocalPosition(el, fallback){
+    const pos = el.getAttribute('position');
+    if(pos && typeof pos.x === 'number') return {x: pos.x, y: pos.y, z: pos.z};
+    return fallback;
+  }
+
   function explodeOnceAndFloatThenReassemble(){
     if(!isActive) return;
 
-    // Explosion: on crée des animations position/rotation vers des cibles calculées
+    // Explosion: animation vers target calculés en local space
     components.forEach(comp=>{
       const el = document.getElementById(comp.id);
       if(!el) return;
       const orig = originalData[comp.id].position;
-      // calcul d'une cible d'explosion (base = orig + offset initial fourni, + random)
       const randSpread = 60;
       const targetPos = {
         x: orig.x + (Math.random()-0.5) * randSpread,
-        y: orig.y + Math.abs((Math.random()-0.5) * randSpread) + 20, // tendance à monter
+        y: orig.y + Math.abs((Math.random()-0.5) * randSpread) + 20,
         z: orig.z + (Math.random()-0.5) * randSpread
       };
       const targetRot = {
@@ -114,15 +104,8 @@ document.addEventListener('DOMContentLoaded',()=>{
         y: (Math.random()-0.5) * 90,
         z: (Math.random()-0.5) * 90
       };
-
-      // nettoyage pour forcer le redémarrage de l'animation
       el.removeAttribute('animation__pos');
       el.removeAttribute('animation__rot');
-
-      // s'assurer visible
-      el.setAttribute('visible', true);
-
-      // animation explosion (part de la valeur locale actuelle pour aller vers targetPos)
       el.setAttribute('animation__pos', {
         property: 'position',
         to: `${targetPos.x} ${targetPos.y} ${targetPos.z}`,
@@ -135,31 +118,23 @@ document.addEventListener('DOMContentLoaded',()=>{
         dur: EXPLODE_ANIM_DUR,
         easing: 'easeOutCubic'
       });
+      el.setAttribute('visible', true);
     });
 
-    // après la fin de l'explosion -> lancement du flottement en boucle
+    // après explosion -> flottement en boucle
     pushTimeout(setTimeout(()=> {
       if(!isActive) return;
-
       components.forEach(comp=>{
         const el = document.getElementById(comp.id);
         if(!el) return;
-
-        // lecture de la position locale courante (getAttribute renvoie la position locale que les animations modifient)
-        const curPosAttr = el.getAttribute('position');
-        const curPos = (curPosAttr && typeof curPosAttr.x === 'number') ?
-                        {x:curPosAttr.x, y:curPosAttr.y, z:curPosAttr.z} :
-                        originalData[comp.id].position;
-
-        // amplitude de flottement individuelle pour réduire chevauchements
+        const orig = originalData[comp.id].position;
+        const curPos = getCurrentLocalPosition(el, { x: orig.x + comp.offset.x, y: orig.y + comp.offset.y, z: orig.z + comp.offset.z });
         const floatAmp = 20 + Math.random()*40;
         const floatTarget = {
           x: curPos.x + (Math.random()-0.5) * floatAmp,
           y: curPos.y + (Math.random()*floatAmp*0.6),
           z: curPos.z + (Math.random()-0.5) * floatAmp
         };
-
-        // mettre une animation en loop alternate (oscillation)
         el.removeAttribute('animation__float');
         el.setAttribute('animation__float', {
           property: 'position',
@@ -169,8 +144,6 @@ document.addEventListener('DOMContentLoaded',()=>{
           loop: true,
           easing: 'easeInOutSine'
         });
-
-        // rotation lente en boucle
         el.removeAttribute('animation__rot_float');
         el.setAttribute('animation__rot_float', {
           property: 'rotation',
@@ -181,26 +154,18 @@ document.addEventListener('DOMContentLoaded',()=>{
           easing: 'linear'
         });
       });
-
     }, EXPLODE_ANIM_DUR));
 
-    // Planifier le re-assemblage après EXPLODE_ANIM_DUR + FLOAT_DURATION
+    // planifier reassemble
     pushTimeout(setTimeout(()=> {
       if(!isActive) return;
-
       components.forEach(comp=>{
         const el = document.getElementById(comp.id);
         if(!el) return;
         const orig = originalData[comp.id].position;
         const origRot = originalData[comp.id].rotation;
-
-        // supprimer animations de flottement
         el.removeAttribute('animation__float');
         el.removeAttribute('animation__rot_float');
-
-        // lancer animation de retour vers la position forcée (originalData)
-        el.removeAttribute('animation__return');
-        el.removeAttribute('animation__rot_return');
         el.setAttribute('animation__return', {
           property: 'position',
           to: `${orig.x} ${orig.y} ${orig.z}`,
@@ -215,21 +180,19 @@ document.addEventListener('DOMContentLoaded',()=>{
         });
       });
 
-      // après la fin du reassemble, nettoyer et relancer le cycle si on est toujours actif
+      // après reassembly, forcer positions EXACTES et relancer cycle
       pushTimeout(setTimeout(()=> {
         if(!isActive) return;
-
-        // nettoyage et forçage des positions EXACTES (en cas de petites dérives)
         components.forEach(comp=>{
           const el = document.getElementById(comp.id);
           if(!el) return;
+          // cleanup
           el.removeAttribute('animation__pos');
           el.removeAttribute('animation__rot');
           el.removeAttribute('animation__float');
           el.removeAttribute('animation__rot_float');
           el.removeAttribute('animation__return');
           el.removeAttribute('animation__rot_return');
-
           const orig = originalData[comp.id].position;
           const origRot = originalData[comp.id].rotation;
           el.setAttribute('position', `${orig.x} ${orig.y} ${orig.z}`);
@@ -237,57 +200,94 @@ document.addEventListener('DOMContentLoaded',()=>{
           el.setAttribute('visible', true);
         });
 
-        // relancer après délai d'attente
         if(isActive){
           pushTimeout(setTimeout(()=> {
             if(isActive) explodeOnceAndFloatThenReassemble();
           }, WAIT_BEFORE_EXPLODE));
         }
       }, REASSEMBLE_ANIM_DUR));
-
     }, EXPLODE_ANIM_DUR + FLOAT_DURATION));
   }
 
-  // LISTERNS MINDAR
-  const targetEntity = document.querySelector('[mindar-image-target]');
+  // --- WAIT for AFRAME scene + mindar target entity to be ready ---
+  function initWhenReady(){
+    const scene = document.querySelector('a-scene');
+    if(!scene) {
+      console.warn('a-scene non trouvé, nouvelle tentative dans 200ms');
+      setTimeout(initWhenReady, 200);
+      return;
+    }
 
-  // Au chargement : forcer les positions de départ dans le DOM
-  enforceStartPositions();
-
-  targetEntity.addEventListener('targetFound', ()=>{
-    if(isActive) return;
-    isActive = true;
-    parent.setAttribute('visible', true);
-
-    // ré-enforcer les positions (au cas où)
-    enforceStartPositions();
-    resetToOriginalInstant();
-
-    // lancer cycle: attendre 5s puis exploser
-    pushTimeout(setTimeout(()=>{
-      if(isActive) explodeOnceAndFloatThenReassemble();
-    }, WAIT_BEFORE_EXPLODE));
-  });
-
-  targetEntity.addEventListener('targetLost', ()=>{
-    // stoppe tout et remet TOUTES les pièces strictement à startPos
-    isActive = false;
-    parent.setAttribute('visible', false);
-    clearAllTimeouts();
-    // retirer animations et forcer positions de départ
-    resetToOriginalInstant();
-    enforceStartPositions();
-  });
-
-  // sécurité : si des modèles chargent après coup, on ré-applique startPositions quelques frames
-  // pour s'assurer que le DOM reflète bien les positions voulues.
-  let safetyAttempts = 0;
-  function safetyEnforce(){
-    enforceStartPositions();
-    safetyAttempts++;
-    if(safetyAttempts < 4) requestAnimationFrame(safetyEnforce);
+    // attendre événement 'loaded' de la scène pour garantir que MindAR s'initialise
+    if(!scene.hasLoaded) {
+      scene.addEventListener('loaded', () => {
+        // petite latence pour laisser MindAR attacher ses composants internes
+        setTimeout(initWhenReadyAfterSceneLoaded, 50);
+      });
+    } else {
+      setTimeout(initWhenReadyAfterSceneLoaded, 50);
+    }
   }
-  safetyEnforce();
 
-});
+  function initWhenReadyAfterSceneLoaded(){
+    let attempts = 0;
+    function tryFindTarget(){
+      attempts++;
+      const targetEntity = document.querySelector('[mindar-image-target]');
+      const parent = document.querySelector('#enceinte-parent');
+      if(!targetEntity || !parent){
+        if(attempts < MAX_TARGET_WAIT_ATTEMPTS){
+          // réessayer
+          setTimeout(tryFindTarget, 200);
+          return;
+        } else {
+          console.error('Impossible de trouver [mindar-image-target] ou #enceinte-parent après plusieurs tentatives.');
+          return;
+        }
+      }
+
+      // Une fois target trouvé, on applique les positions de départ forcées et on branche les events
+      enforceStartPositions();
+      resetToOriginalInstant();
+
+      // handler targetFound
+      targetEntity.addEventListener('targetFound', ()=>{
+        if(isActive) return;
+        isActive = true;
+        parent.setAttribute('visible', true);
+        // ré-imposer positions au moment de la détection (sécurité)
+        enforceStartPositions();
+        resetToOriginalInstant();
+        // attendre WAIT_BEFORE_EXPLODE puis lancer la séquence
+        pushTimeout(setTimeout(()=> {
+          if(isActive) explodeOnceAndFloatThenReassemble();
+        }, WAIT_BEFORE_EXPLODE));
+      });
+
+      // handler targetLost
+      targetEntity.addEventListener('targetLost', ()=>{
+        isActive = false;
+        parent.setAttribute('visible', false);
+        clearAllTimeouts();
+        resetToOriginalInstant();
+        enforceStartPositions();
+      });
+
+      // sécurité : ré-appliquer start positions quelques frames pour s'assurer qu'aucun loader les écrase
+      let safety = 0;
+      function safetyEnforce(){
+        enforceStartPositions();
+        safety++;
+        if(safety < 4) requestAnimationFrame(safetyEnforce);
+      }
+      safetyEnforce();
+    }
+
+    tryFindTarget();
+  }
+
+  // kick off
+  initWhenReady();
+
+})();
 </script>
