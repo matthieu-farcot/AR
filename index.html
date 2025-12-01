@@ -133,6 +133,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   const targetEntity=document.querySelector('[mindar-image-target]');
   targetEntity.addEventListener('targetFound',()=>{
     parent.setAttribute('visible',true);
+    resetToOriginal();
     initComponents();
     looping = true;
     explode();
