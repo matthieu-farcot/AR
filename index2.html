@@ -11,7 +11,6 @@ a-scene { width:100%; height:100%; display:block; }
 </style>
 </head>
 <body>
-
 <a-scene mindar-image="imageTargetSrc: ./targets-2.mind; smooth: true; smoothCount: 10;" embedded color-space="sRGB" vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false">
   <a-camera mindar-image-camera></a-camera>
   <a-entity mindar-image-target="targetIndex: 0">
@@ -59,11 +58,32 @@ document.addEventListener('DOMContentLoaded',()=>{
   const particles=[];
   let explosionSphere=null;
   let looping = false;
-  let explodeTimeout = null;
 
   const particlesContainer=document.createElement('a-entity');
   particlesContainer.setAttribute('id','particles-container');
   enceinte.appendChild(particlesContainer);
+
+  function createParticles(){
+    const colors=['#ffffff','#ffaa00','#ff6600','#ff0000'];
+    explosionSphere=document.createElement('a-sphere');
+    explosionSphere.setAttribute('radius',1);
+    explosionSphere.setAttribute('color','#ffaa00');
+    explosionSphere.setAttribute('material','shader:standard; color:#ffaa00; opacity:0; transparent:true; emissive:#ff6600');
+    explosionSphere.setAttribute('visible',false);
+    particlesContainer.appendChild(explosionSphere);
+
+    for(let i=0;i<120;i++){
+      const particle=document.createElement('a-box');
+      const color=colors[Math.floor(Math.random()*colors.length)];
+      particle.setAttribute('width',0.2);
+      particle.setAttribute('height',0.2);
+      particle.setAttribute('depth',0.2);
+      particle.setAttribute('material',`shader:standard; color:${color}; opacity:0; transparent:true; emissive:${color}`);
+      particle.setAttribute('visible',false);
+      particlesContainer.appendChild(particle);
+      particles.push(particle);
+    }
+  }
 
   function initComponents(){
     components.forEach(comp=>{
@@ -76,31 +96,33 @@ document.addEventListener('DOMContentLoaded',()=>{
     });
   }
 
-  function resetToOriginal(){
-    // Stoppe toute boucle d'explosion
-    looping = false;
-    if(explodeTimeout) clearTimeout(explodeTimeout);
-
-    components.forEach(comp=>{
-      const el = document.getElementById(comp.id);
-      const orig = originalData[comp.id].position;
-      const origRot = originalData[comp.id].rotation;
-      el.object3D.position.set(orig.x, orig.y, orig.z);
-      el.object3D.rotation.set(
-        THREE.MathUtils.degToRad(origRot.x),
-        THREE.MathUtils.degToRad(origRot.y),
-        THREE.MathUtils.degToRad(origRot.z)
-      );
-      el.removeAttribute('animation__pos');
-      el.removeAttribute('animation__rot');
-      el.removeAttribute('animation__return');
-      el.removeAttribute('animation__rot_return');
+  function emitParticles(){
+    if(explosionSphere){
+      explosionSphere.setAttribute('visible',true);
+      explosionSphere.setAttribute('animation__expand',{property:'radius',from:1,to:10,dur:600,easing:'easeOutQuad'});
+      explosionSphere.setAttribute('animation__fade',{property:'material.opacity',from:1,to:0,dur:600,easing:'easeOutQuad'});
+      setTimeout(()=>explosionSphere.setAttribute('visible',false),600);
+    }
+    particles.forEach((particle,i)=>{
+      setTimeout(()=>{
+        const angle=(i/particles.length)*Math.PI*2;
+        const elevation=(Math.random()-0.5)*Math.PI*0.8;
+        const radius=8+Math.random()*6;
+        particle.setAttribute('visible',true);
+        particle.setAttribute('position','0 0 0');
+        const targetX=Math.cos(angle)*Math.cos(elevation)*radius;
+        const targetY=Math.sin(elevation)*radius;
+        const targetZ=Math.sin(angle)*Math.cos(elevation)*radius;
+        particle.setAttribute('animation__move',{property:'position',to:`${targetX} ${targetY} ${targetZ}`,dur:1800,easing:'easeOutCubic'});
+        particle.setAttribute('animation__spin',{property:'rotation',to:`${Math.random()*360} ${Math.random()*360} ${Math.random()*360}`,dur:1800,easing:'linear'});
+        particle.setAttribute('animation__fade',{property:'material.opacity',from:1,to:0,dur:1800,delay:200,easing:'easeInQuad'});
+        setTimeout(()=>particle.setAttribute('visible',false),2000);
+      },i*5);
     });
   }
 
+  // --- Boucle stable avec setTimeout ---
   function explode(){
-    if(!looping) return;
-
     components.forEach(comp=>{
       const el=document.getElementById(comp.id);
       const orig = originalData[comp.id].position;
@@ -112,13 +134,11 @@ document.addEventListener('DOMContentLoaded',()=>{
       el.setAttribute('animation__pos',{property:'position',to:`${targetPos.x} ${targetPos.y} ${targetPos.z}`,dur:1800,easing:'easeOutCubic'});
       el.setAttribute('animation__rot',{property:'rotation',to:`${targetRot.x} ${targetRot.y} ${targetRot.z}`,dur:1800,easing:'easeOutCubic'});
     });
-
-    explodeTimeout = setTimeout(reassemble, 1900);
+    emitParticles();
+    setTimeout(reassemble, 1900); // enchaîne la reconstitution
   }
 
   function reassemble(){
-    if(!looping) return;
-
     components.forEach(comp=>{
       const el=document.getElementById(comp.id);
       const orig = originalData[comp.id].position;
@@ -126,24 +146,23 @@ document.addEventListener('DOMContentLoaded',()=>{
       el.setAttribute('animation__return',{property:'position',to:`${orig.x} ${orig.y} ${orig.z}`,dur:1800,easing:'easeInOutCubic'});
       el.setAttribute('animation__rot_return',{property:'rotation',to:`${origRot.x} ${origRot.y} ${origRot.z}`,dur:1800,easing:'easeInOutCubic'});
     });
-
-    explodeTimeout = setTimeout(explode, 1900);
+    setTimeout(explode, 1900); // relance l'explosion → boucle infinie
   }
 
   const targetEntity=document.querySelector('[mindar-image-target]');
   targetEntity.addEventListener('targetFound',()=>{
     parent.setAttribute('visible',true);
     initComponents();
+    createParticles();
     looping = true;
-    explode();
+    explode(); // démarre la boucle
   });
 
   targetEntity.addEventListener('targetLost',()=>{
     parent.setAttribute('visible',false);
-    resetToOriginal();
+    looping = false; // stoppe la boucle si le target disparaît
   });
 });
 </script>
-
 </body>
 </html>
